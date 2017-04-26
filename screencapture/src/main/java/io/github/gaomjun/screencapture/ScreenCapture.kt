@@ -10,7 +10,10 @@ import android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME
 import android.media.MediaFormat
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
-import android.view.Surface
+import rx.Observable
+import rx.Subscription
+import rx.observables.ConnectableObservable
+import rx.subjects.PublishSubject
 import java.nio.ByteBuffer
 
 /**
@@ -20,7 +23,10 @@ class ScreenCapture(val context: Context) {
 
     private var mediaProjectionManager: MediaProjectionManager? = null
     private var mediaProjection: MediaProjection? = null
+
     private var videoEncoder: VideoEncoder? = null
+    private var audioEncoder: AudioEncoder? = null
+
     private var muxer: Muxer? = null
     private var path: String? = null
 
@@ -28,8 +34,11 @@ class ScreenCapture(val context: Context) {
     var height: Int = 1920
     var dpi: Int = 2
 
+    private var videoFormatObservable: PublishSubject<MediaFormat>? = null
+    private var audioFormatObservable: PublishSubject<MediaFormat>? = null
+
     companion object {
-        val SCREEN_CAPTURE_REQUEST_CODE = 1000;
+        val SCREEN_CAPTURE_REQUEST_CODE = 1000
     }
 
     fun start(path: String) {
@@ -45,47 +54,89 @@ class ScreenCapture(val context: Context) {
     fun stop() {
         mediaProjection?.stop()
         videoEncoder?.stop()
+        audioEncoder?.stop()
         muxer?.stop()
 
-        startMuxingVideo = false
+        startMuxing = false
         hasKeyFrame = false
     }
 
     fun userAgreeCaptureScreenCallback(resultCode: Int, data: Intent?) {
+        videoFormatObservable = PublishSubject.create<MediaFormat>()
+        audioFormatObservable = PublishSubject.create<MediaFormat>()
+
         videoEncoder = VideoEncoder(width, height)
         videoEncoder?.callback = VideoEncoderCallback()
         videoEncoder?.start()
 
-        muxer = Muxer()
+        audioEncoder = AudioEncoder()
+        audioEncoder?.callback = AudioEncoderCallback()
+        audioEncoder?.start()
 
-        mediaProjection = mediaProjectionManager?.getMediaProjection(resultCode, data);
+        muxer = Muxer()
+        Observable.zip(videoFormatObservable, audioFormatObservable, {videoFormat, audioFormat ->
+            if (videoFormat != null && audioFormat != null) {
+                println("video and audio format prepared")
+//                muxer?.videoFormat = videoFormat
+//                muxer?.audioFormat = audioFormat
+//                muxer?.start(path!!)
+                startMuxing = true
+
+            }
+        }).subscribe()
+
+        mediaProjection = mediaProjectionManager?.getMediaProjection(resultCode, data)
         mediaProjection?.createVirtualDisplay("Screen", width, height, dpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, videoEncoder?.inputSurface, null, null)
     }
 
+    private var startMuxing = false
+    private var hasKeyFrame = false
     private inner class VideoEncoderCallback: VideoEncoder.Callback {
         override fun onOutputBufferAvailable(buffer: ByteBuffer?, info: MediaCodec.BufferInfo?) {
             super.onOutputBufferAvailable(buffer, info)
 
-            println("${info?.size} ${info?.presentationTimeUs}")
+            if (!startMuxing) return
 
-            if (!hasKeyFrame && info?.flags == BUFFER_FLAG_KEY_FRAME)
+            if (!hasKeyFrame && info?.flags == BUFFER_FLAG_KEY_FRAME) {
                 hasKeyFrame = true
+            }
 
-            if (startMuxingVideo && hasKeyFrame)
-                muxer?.muxing(buffer!!, info!!, Muxer.MEDIA_TYPE.MEDIA_TYPE_VIDEO)
+            if (hasKeyFrame) {
+                println("videoBuffer ${info?.size} ${info?.presentationTimeUs}")
+            }
+//            if (startMuxingVideo && hasKeyFrame)
+//                muxer?.muxing(buffer!!, info!!, Muxer.MEDIA_TYPE.MEDIA_TYPE_VIDEO)
         }
 
         override fun onOutputFormatChanged(format: MediaFormat?) {
             super.onOutputFormatChanged(format)
 
-            println("onOutputFormatChanged")
+            println("video onOutputFormatChanged")
 
-            muxer?.videoFormat = format
-            muxer?.start(path!!)
-            startMuxingVideo = true
+            videoFormatObservable?.onNext(format)
+            videoFormatObservable?.onCompleted()
         }
     }
 
-    private var startMuxingVideo = false
-    private var hasKeyFrame = false
+    private inner class AudioEncoderCallback : AudioEncoder.Callback {
+        override fun onOutputBufferAvailable(buffer: ByteBuffer?, info: MediaCodec.BufferInfo?) {
+            super.onOutputBufferAvailable(buffer, info)
+
+            if (!startMuxing) return
+
+            if (hasKeyFrame) {
+                println("audioBuffer ${info?.size} ${info?.presentationTimeUs}")
+            }
+
+        }
+
+        override fun onOutputFormatChanged(format: MediaFormat?) {
+            super.onOutputFormatChanged(format)
+
+            println("audio onOutputFormatChanged")
+
+            audioFormatObservable?.onNext(format)
+            audioFormatObservable?.onCompleted()
+        }
+    }
 }

@@ -26,9 +26,9 @@ class MainActivity : Activity() {
             screenCapture?.start(path)
         }
 
-        Handler().postDelayedR(100000) {
-            screenCapture?.stop()
-        }
+//        Handler().postDelayedR(10000) {
+//            screenCapture?.stop()
+//        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {

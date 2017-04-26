@@ -18,16 +18,19 @@ class VideoEncoder(val width: Int, val height: Int) {
     private var codec: MediaCodec? = null
 
     var inputSurface: Surface? = null
+        private set
 
     init {
         initEncoder()
     }
 
     fun start() {
+        println("VideoEncoder start")
         codec?.start()
     }
 
     fun stop() {
+        println("VideoEncoder stop")
         codec?.stop()
         codec?.release()
     }
